@@ -1,9 +1,12 @@
 from fastapi import FastAPI, Depends, UploadFile, File, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from uuid import UUID
+import io
+import csv
 
-from . import crud, models, ocr
+from . import crud, models, ocr, analytics  # Added analytics import
 from .database import engine, Base, get_db
 
 
@@ -13,7 +16,7 @@ app = FastAPI(
     version="0.1.0"
 )
 
-#startup event to connect to the db
+# startup event to connect to the db
 @app.on_event("startup")
 async def on_startup():
     """
@@ -116,3 +119,67 @@ async def update_user_preferences(
     Update user preferences.
     """
     return await crud.update_user_preferences(db=db, prefs_data=prefs_data)
+
+
+@app.get("/analytics/", response_model=models.AnalyticsResponse)
+async def read_analytics(db: AsyncSession = Depends(get_db)):
+    """
+    Retrieve aggregated analytics data for all expenses.
+    """
+    # Get the analytics data
+    analytics_data = await analytics.get_full_analytics(db)
+    
+    # Get the user's base currency to include in the response
+    user_prefs = await crud.get_user_preferences(db)
+    
+    return {
+        "by_category": analytics_data["by_category"],
+        "by_merchant": analytics_data["by_merchant"],
+        "over_time": analytics_data["over_time"],
+        "base_currency": user_prefs.base_currency,
+    }
+
+
+@app.get("/export/csv")
+async def export_expenses_to_csv(db: AsyncSession = Depends(get_db)):
+    """
+    Exports all expenses to a CSV file.
+    """
+    # Use io.StringIO to create an in-memory text file
+    string_io = io.StringIO()
+    writer = csv.writer(string_io)
+
+    # Write the header row
+    writer.writerow([
+        "ID", "Date", "Merchant", "Category", "Amount", 
+        "Currency", "Normalized Amount", "Base Currency", "Notes"
+    ])
+
+    # Fetch all expenses (adjust limit as needed for very large datasets)
+    expenses = await crud.get_expenses(db, limit=10000) 
+    user_prefs = await crud.get_user_preferences(db)
+    base_currency = user_prefs.base_currency
+
+    # Write data rows
+    for expense in expenses:
+        writer.writerow([
+            expense.id,
+            expense.date,
+            expense.merchant,
+            expense.category,
+            expense.amount,
+            expense.currency,
+            expense.normalized_amount,
+            base_currency,
+            expense.notes
+        ])
+
+    # Seek to the beginning of the stream
+    string_io.seek(0)
+    
+    # Return the CSV file as a streaming response
+    return StreamingResponse(
+        iter([string_io.read()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=expenses.csv"}
+    )

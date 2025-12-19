@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, Json
 from uuid import UUID
 from datetime import date, datetime
 from decimal import Decimal
+from typing import List, Optional
 
 # For single-user MVP
 class UserPreferences(BaseModel):
@@ -41,3 +42,22 @@ class ExpenseUpdate(BaseModel):
     merchant: str | None = None
     date: date | None = None
     notes: str | None = None
+
+# --- Add these new models for Analytics ---
+
+class AnalyticsTotal(BaseModel):
+    """A generic model for aggregated totals."""
+    name: str  # e.g., category name or merchant name
+    total: Decimal
+
+class AnalyticsOverTime(BaseModel):
+    """Model for time-series data."""
+    date: date # The start of the period (e.g., first day of the month)
+    total: Decimal
+
+class AnalyticsResponse(BaseModel):
+    """The final structure for the analytics endpoint response."""
+    by_category: List[AnalyticsTotal]
+    by_merchant: List[AnalyticsTotal]
+    over_time: List[AnalyticsOverTime]
+    base_currency: str
